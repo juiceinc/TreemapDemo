@@ -1,0 +1,294 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Application xmlns:fx="http://ns.adobe.com/mxml/2009" 
+               xmlns:s="library://ns.adobe.com/flex/spark" creationComplete="dataLoader.send();" 
+               xmlns:mx="library://ns.adobe.com/flex/mx" minWidth="955" minHeight="600" xmlns:data="org.juicekit.data.*" xmlns:controls="org.juicekit.controls.*" xmlns:container="org.juicekit.container.*">
+    
+    <fx:Script>
+    <![CDATA[
+        import flare.vis.data.Tree;
+        import flare.vis.events.VisualizationEvent;
+        
+        import mx.collections.ArrayCollection;
+        import mx.controls.Alert;
+        import mx.events.DragEvent;
+        import mx.rpc.events.FaultEvent;
+        import mx.rpc.events.ResultEvent;
+        
+        import org.juicekit.data.converter.DelimitedTextConverter;
+        import org.juicekit.events.DataMouseEvent;
+        import org.juicekit.query.methods.*;
+        import org.juicekit.util.GraphUtil;
+        import org.juicekit.util.Strings;
+        
+        
+        /** Storage for raw data returned from the delimited file */
+        private var rawData:Array;
+        
+        
+        /** Formatted maximum value on the color scale */
+        [Bindable]
+        public var scaleMax:String;
+        
+        
+        /** Formatted minimum value on the color scale */
+        [Bindable]
+        public var scaleMin:String;
+        
+        
+        /** Storage for the order of levels in the tree */
+        [Bindable] private var levelOrder:ArrayCollection =  new ArrayCollection(['AGE', 'SEX', 'STATE']);
+        
+        
+        /**
+         * Parse the CSV data loaded from the server.
+         */
+        public function resultHandler(event:ResultEvent):void {
+            rawData = new DelimitedTextConverter(',').parse(event.result as String).nodes.data;
+            /*
+            The raw data looks like this:
+            ~8000 rows
+            
+            STATE,SEX,AGE,POP2000,POP2008
+            Alabama,M,0,30479,32055
+            Alabama,M,1,29904,32321
+            Alabama,M,2,30065,31789
+            */
+            
+            // Group the ages into 10 year bands to reduce data size
+            for each (var o:Object in rawData) {
+                if (o.AGE < 10) {
+                    o.AGE = '0-9';
+                } else if (o.AGE < 20) {
+                    o.AGE = '10-19';
+                } else if (o.AGE < 30) {
+                    o.AGE = '20-29';
+                } else if (o.AGE < 40) {
+                    o.AGE = '30-39';
+                } else if (o.AGE < 50) {
+                    o.AGE = '40-49';
+                } else if (o.AGE < 60) {
+                    o.AGE = '50-59';
+                } else if (o.AGE < 70) {
+                    o.AGE = '60-69';
+                } else if (o.AGE < 80) {
+                    o.AGE = '70-79';
+                } else if (o.AGE < 90) {
+                    o.AGE = '80+';
+                }
+            }
+            // resummarize by the new agebands
+            rawData = select('AGE', 'STATE', 'SEX', {POP2000: sum('POP2000')}, {POP2008: sum('POP2008')}).groupby('AGE', 'STATE', 'SEX').eval(rawData);
+            
+            generateTreemapData();
+        }
+        
+        
+        /**
+         * Handle dataLoader faults
+         */
+        protected function faultHandler(event:FaultEvent):void {
+            Alert.show('Unable to load data.');
+        }
+        
+        
+        /**
+         * Generate a treemap using rawData and the current levelOrder.
+         */
+        public function generateTreemapData():void {
+            treemap.data = GraphUtil.treeMap(rawData,                       // An array containing data 
+                levelOrder.source,             // The "levels" of the treemap
+                // The metrics
+                ['POP2000', 'POP2008', {change: pctchange('POP2008', 'POP2000')}]
+            );
+            treemap.dataRoot = (treemap.data as Tree).root
+
+            
+            treemap.vis.removeEventListener(VisualizationEvent.UPDATE, calculateScaleMinMax);
+            treemap.vis.addEventListener(VisualizationEvent.UPDATE, calculateScaleMinMax);            
+            
+            currentState = 'treemap';
+        }
+        
+        
+        /**
+         * Save the scale min and max values after visualization updates.
+         */
+        public function calculateScaleMinMax(e:Event=null):void {
+            if (colorCmb.selectedItem == 'change') {
+                scaleMax = Strings.format('{0:0.0%}', Number(treemap.getColorEncoder().scale.max));
+                scaleMin = Strings.format('{0:0.0%}', Number(treemap.getColorEncoder().scale.min));
+            } else {
+                scaleMax = Strings.format('{0:#,##0}', Number(treemap.getColorEncoder().scale.max));
+                scaleMin = Strings.format('{0:#,##0}', Number(treemap.getColorEncoder().scale.min));
+            }
+        }
+        
+        
+        /**
+         * Handle mouse over of treemap nodes
+         */
+        private function treemapMouseOver(e:DataMouseEvent):void {
+            selectedNode.text = Strings.format("State: {0}\n" + 
+                "Sex: {1}\n" + 
+                "Age: {2}\n" + 
+                "Population in 2000: {4:#,##0}\n" +  
+                "Population in 2008: {5:#,##0}\n" + 
+                "% change: {6:0.0%}", 
+                e.data.STATE, e.data.SEX, e.data.AGE, e.data.avgAge, e.data.POP2000, e.data.POP2008, e.data.change);
+        }
+        
+        
+        /**
+         * Handle mouse out of treemap nodes
+         */
+        private function treemapMouseOut(e:DataMouseEvent):void {
+            selectedNode.text = '';
+        }
+        
+        
+        /**
+         * Handle reordering of the treemap levels.
+         */
+        private function handleBtnReorder(event:DragEvent):void {
+            // delay briefly to allow the move animation to complete
+            treemap.data = null;
+            setTimeout(function():void {
+                generateTreemapData();
+            }, 200);
+        }
+        
+        
+    ]]>
+    </fx:Script>
+    
+    
+    <fx:Declarations>
+        <mx:HTTPService id="dataLoader"
+                        url="http://media.juiceanalytics.com/census/CENSUS_STATEAGESEX.csv"
+                        method="GET"
+                        showBusyCursor="true"
+                        result="resultHandler(event)"
+                        fault="faultHandler(event)"
+                        resultFormat="text"/>
+    </fx:Declarations>    
+    
+    <s:states>
+        <s:State name="loading"/>
+        <s:State name="treemap"/>
+    </s:states>
+    
+    <fx:Style source="style.css"/>
+    
+    <s:VGroup width="100%" height="100%" paddingLeft="20" paddingTop="20" paddingRight="20" paddingBottom="20">
+        <s:Label text="Population Growth by Age, Gender, and State" styleName="jkHeader"/>
+        <s:Label text="This demo illustrates the features of the JuiceKit treemap. Source: US Census Bureau" styleName="jkBase"/>
+        
+        <!-- 
+        Controls for treemap levels, colors, size
+        -->
+        <s:HGroup verticalAlign="middle">
+            <s:VGroup gap="-3">
+                <s:Label text="Group by:"/>
+                <s:Label text="drag to reorder" styleName="jkNotes"/>                
+            </s:VGroup>
+            <s:List id="hl"
+                    dataProvider="{levelOrder}" 
+                    dragComplete="handleBtnReorder(event)" 
+                    dragMoveEnabled="true"
+                    dropEnabled="true"
+                    dragEnabled="true"
+                    width="220" borderVisible="false"
+                    selectionColor="#ffffff"
+                    >
+                <s:layout>
+                    <s:HorizontalLayout gap="2"/>
+                </s:layout>
+                <s:itemRenderer>
+                    <fx:Component>
+                        <s:ItemRenderer>
+                            <s:Button label="{data}" width="60" height="20"/>
+                        </s:ItemRenderer>
+                    </fx:Component>
+                </s:itemRenderer>
+            </s:List>
+            <s:Label text="Color by:"/>
+            <s:ComboBox id="colorCmb" 
+                        selectedIndex="0" 
+                        dataProvider="{new ArrayCollection(['change', 'POP2000', 'POP2008'])}" 
+                        width="100"/>
+            <s:Label text="Size by:"/>
+            <s:ComboBox id="sizeCmb" 
+                        selectedIndex="0" 
+                        dataProvider="{new ArrayCollection(['POP2000', 'POP2008'])}" 
+                        width="100"/>
+            <s:Label text="Color palette:"/>
+            <s:ComboBox id="paletteCmb"
+                        selectedIndex="0"
+                        width="100"
+                        dataProvider="{new ArrayCollection(['RdGy','hot', 'summer', 'cool', 'Purples', 'YlGn', 'RdGy', 'PuOr'])}"
+                        />
+        </s:HGroup>
+        
+        <!--
+        This is the treemap itself.
+        
+        TreeMapZoomControl allows the treemap to zoom into and out
+        of selected subcategories.		
+        
+        Currently the treemap can not use Flex 4 based fonts so fonts are set
+        explicitly.        
+        -->
+        <controls:TreeMapZoomControl id="zoomControl" tree="{treemap}" fontFamily="Arial" fontSize="16" color="#333333"/>
+        
+        <s:VGroup width="100%" height="100%" alpha.loading="0" alpha.treemap="1">
+            <s:HGroup width="100%" height="100%" gap="20">
+                
+                <!-- 
+                The treemap itself.
+                
+                Currently the treemap can not use Flex 4 based fonts so fonts are set
+                explicitly.
+                -->
+                <controls:TreeMapControl id="treemap"
+                                         width="100%"
+                                         height="100%" 
+                                         transitionPeriod="1.2"
+                                         styleFromDataRoot="true"
+                                         
+                                         fontFamily="Arial"
+                                         fontSize="16"
+                                         labelEncodingField="name"
+                                         labelColorStrategy="glow"
+                                         truncateToFit="true"
+                                         
+                                         palette="{paletteCmb.selectedItem}"
+                                         colorEncodingField="{colorCmb.selectedItem}"
+                                         sizeEncodingField="{sizeCmb.selectedItem}"
+                                         
+                                         jkDataMouseOver="treemapMouseOver(event)"
+                                         jkDataMouseOut="treemapMouseOut(event)"
+                                         
+                                         strokeColors="[0xffffff, 0xffffff, 0xffffff, 0x333333]"
+                                         strokeAlphas="[1,1,1,1]"
+                                         strokeThicknesses="[0,4,2,0.25]"/>
+                
+                <s:VGroup width="250" height="100%">
+                    <!--
+                    A description of the node that is currently under the mouse.
+                    -->
+                    <s:Label id="selectedNode" width="250"/>
+                    <mx:Spacer height="100%"/>
+                    <!--
+                    Color legend
+                    -->
+                    <s:Group>
+                        <container:PaletteCanvas palette="{'-' + paletteCmb.selectedItem}" width="20" height="150" direction="vertical"/>
+                        <s:Label top="0" left="25" text="{scaleMax}"/>
+                        <s:Label bottom="0" left="25" text="{scaleMin}"/>
+                    </s:Group>
+                </s:VGroup>
+            </s:HGroup>
+        </s:VGroup>
+    </s:VGroup>
+    
+</s:Application>
