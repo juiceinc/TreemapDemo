@@ -1,1 +1,8 @@
-This is a simple Treemap demo.
+This is a simple Flex Treemap demo using the open-source JuiceKit libraries.
+                                       
+The source for the libraries can be found at:
+
+https://github.com/juiceinc/juicekit-flex-core/
+https://github.com/juiceinc/juicekit-flex-data/
+https://github.com/juiceinc/juicekit-flex-visualizations/
+
