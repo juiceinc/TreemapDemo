@@ -227,6 +227,12 @@
                         width="100"
                         dataProvider="{new ArrayCollection(['RdGy','hot', 'summer', 'cool', 'Purples', 'YlGn', 'RdGy', 'PuOr'])}"
                         />
+            <s:Label text="Depth:"/>
+            <s:ComboBox id="depthCmb"
+                        selectedIndex="0"
+                        width="100"
+                        dataProvider="{new ArrayCollection(['1','2','3'])}"
+                        />
         </s:HGroup>
         
         <!--
@@ -254,6 +260,7 @@
                                          height="100%" 
                                          transitionPeriod="1.2"
                                          styleFromDataRoot="true"
+                                         maxDepth="{int(depthCmb.selectedItem)}"
                                          
                                          fontFamily="Arial"
                                          fontSize="16"
